@@ -17,21 +17,30 @@ app.add_middleware(
 )
 
 def clean_response(text: str) -> str:
-    # Remove Markdown bold/italics
-    text = re.sub(r"[*_`]+", "", text)
+    # Remove Markdown symbols and list markers
+    text = re.sub(r"[*_`#>-]+", " ", text)
 
     # Remove URLs
     text = re.sub(r"http\S+", "", text)
 
-    # Summarize: keep first 2–3 sentences only
-    sentences = text.split(". ")
-    summary = ". ".join(sentences[:3]).strip()
+    # Replace multiple spaces/newlines with a single space
+    text = re.sub(r"\s+", " ", text)
 
-    # Ensure it ends nicely
-    if not summary.endswith("."):
-        summary += "."
+    # Ensure common list patterns become proper sentences
+    text = re.sub(r"(\d+\.)\s*", r"\1 ", text)   # "1. " stays clean
+    text = re.sub(r"\s-\s", ". ", text)          # "- Symptom" -> ". Symptom"
 
-    return summary
+    # Fix missing periods between items (if not already there)
+    text = re.sub(r"(?<=[a-zA-Z])\s(?=[A-Z])", ". ", text)
+
+    # Trim leading/trailing spaces
+    text = text.strip()
+
+    # Ensure it ends with a period
+    if not text.endswith("."):
+        text += "."
+
+    return text
 
 @app.get("/chat")
 def chat(query: str = Query(...)):
