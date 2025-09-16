@@ -17,39 +17,29 @@ app.add_middleware(
 )
 
 def format_response(text: str) -> str:
-    # Normalize spaces
+    # Remove markdown symbols
+    text = re.sub(r"[*_`#>-]+", "", text)
+
+    # Replace multiple spaces/newlines
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Split into lines for easier handling
-    lines = text.split("\n")
+    # ✅ Ensure each numbered list item starts on a new line
+    text = re.sub(r"(\d+)\.\s*", r"\n\1. ", text)
 
-    formatted_lines = []
-    for line in lines:
+    # ✅ Ensure bullet points also start on new lines
+    text = re.sub(r"(•|-)\s*", r"\n• ", text)
+
+    # ✅ Capitalize first character of sentences if missing
+    sentences = []
+    for line in text.split("\n"):
         line = line.strip()
+        if line and not line[0].isupper():
+            line = line[0].upper() + line[1:]
+        sentences.append(line)
 
-        # Handle numbered lists (e.g., "1. Something")
-        if re.match(r"^\d+\.", line):
-            formatted_lines.append(line)
+    formatted_text = "\n".join(sentences)
 
-        # Handle unordered lists (markdown-style or plain dash/asterisk)
-        elif re.match(r"^[-*•]\s+", line):
-            item = re.sub(r"^[-*•]\s*", "", line).strip()
-            formatted_lines.append(f"• {item}")
-
-        # Normal sentence
-        else:
-            # Ensure first letter is capitalized
-            if line and not line[0].isupper():
-                line = line[0].upper() + line[1:]
-            formatted_lines.append(line)
-
-    # Join lines with proper spacing
-    formatted_text = "\n".join(formatted_lines)
-
-    # Add justification (ensure periods at end of sentences)
-    formatted_text = re.sub(r"(?<![.!?])\s*$", ".", formatted_text)
-
-    return formatted_text
+    return formatted_text.strip()
 
 
 @app.get("/chat")
