@@ -6,6 +6,7 @@ from langchain_community.document_loaders.pdf import PyPDFLoader
 from langchain.chains import RetrievalQA
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.prompts import PromptTemplate
 
 app = FastAPI()
 
@@ -18,22 +19,6 @@ from pathlib import Path
 
 load_dotenv()
 api_key = os.getenv("COHERE_API_KEY")
-
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
-
-QA_PROMPT = PromptTemplate(
-    input_variables=["context", "question"],
-    template="""
-    You are an HIV information assistant. 
-    Use the provided context to answer the user’s question briefly and clearly. 
-    If the answer is not in the context, just say you don’t know.
-
-    Context: {context}
-    Question: {question}
-    Answer:
-    """
-)
 
 
 def load_documents():
@@ -73,20 +58,33 @@ def get_vectorstore():
 
     return vectorstore
 
+from langchain.prompts import PromptTemplate
+
 def get_chatbot():
     vectorstore = get_vectorstore()
-    chat = ChatCohere(model="command-a-03-2025", temperature=0, cohere_api_key=api_key) # type: ignore
-    
+    chat = ChatCohere(model="command-a-03-2025", temperature=0, cohere_api_key=api_key)  # type: ignore
+
     retriever = vectorstore.as_retriever(
         search_type="similarity_score_threshold",
         search_kwargs={"k": 5, "score_threshold": 0.3}
     )
-    
+
+    # Define a proper prompt template
+    template = """You are an HIV information assistant. 
+Use the provided context to answer the user’s question briefly and clearly. 
+    If the answer is not in the context, just say you don’t know.
+
+    Context: {context}
+    Question: {question}
+    Answer:"""
+
+    prompt = PromptTemplate(template=template, input_variables=["context", "question"])
+
     qa = RetrievalQA.from_chain_type(
         llm=chat,
         retriever=retriever,
         chain_type="stuff",
-        chain_type_kwargs={"prompt": QA_PROMPT},
+        chain_type_kwargs={"prompt": prompt},  # 👈 pass prompt as dict
         return_source_documents=True
     )
     return qa
