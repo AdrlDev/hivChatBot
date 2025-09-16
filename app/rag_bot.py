@@ -60,17 +60,37 @@ def get_vectorstore():
 
 def get_chatbot():
     vectorstore = get_vectorstore()
-    chat = ChatCohere(model="command-a-03-2025", temperature=0, cohere_api_key=api_key) # type: ignore
+    chat = ChatCohere(
+        model="command-a-03-2025",
+        temperature=0,  # keep factual
+        cohere_api_key=api_key # type: ignore
+    ) # type: ignore
+
     retriever = vectorstore.as_retriever(
         search_type="similarity_score_threshold",
         search_kwargs={"k": 5, "score_threshold": 0.3}
     )
+
+    # Add instruction to keep answers short
     qa = RetrievalQA.from_chain_type(
         llm=chat,
         retriever=retriever,
-        return_source_documents=True
+        return_source_documents=True,
+        chain_type_kwargs={
+            "prompt": """
+            You are an HIV health assistant.
+            Answer the user’s question based ONLY on the provided context.
+            Keep your answer short, clear, and specific (1–3 sentences max).
+            Do not add extra details or explanations.
+            If the context doesn’t contain the answer, say "I don’t know."
+            Question: {question}
+            Context: {context}
+            Answer:
+            """
+        }
     )
     return qa
+
 
 
 # ✅ Function to generate 5 suggested questions
