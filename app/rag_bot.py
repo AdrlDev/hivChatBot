@@ -75,25 +75,43 @@ def get_chatbot():
 
 # ✅ Function to generate 5 suggested questions
 def generate_suggested_questions(query: str, answer: str) -> list[str]:
-    chat = ChatCohere(model="command-a-03-2025", temperature=0.3, cohere_api_key=api_key) # type: ignore
+    # Load the vectorstore retriever
+    vectorstore = get_vectorstore()
+    retriever = vectorstore.as_retriever(
+        search_type="similarity_score_threshold",
+        search_kwargs={"k": 5, "score_threshold": 0.3}
+    )
+
+    # Get context from PDFs related to the query + answer
+    docs = retriever.get_relevant_documents(query + " " + answer)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    chat = ChatCohere(
+        model="command-a-03-2025",
+        temperature=0.3,
+        cohere_api_key=api_key # type: ignore
+    ) # type: ignore
     
     prompt = f"""
     The user asked: "{query}"
     The chatbot answered: "{answer}"
 
-    Generate 5 related follow-up questions that are concise, natural, and helpful.
+    Here is additional context from HIV information documents:
+    {context}
+
+    Based ONLY on this context, generate 5 related follow-up questions
+    that are concise, natural, and helpful.
     Return them as plain text questions only, no numbering, no formatting, no markdown.
     """
 
     response = chat.invoke(prompt)
     text = response.content if hasattr(response, "content") else str(response)
 
-    # Split into lines and clean
+    # Split and clean up questions
     questions = [q.strip(" -*•.").replace("**", "") for q in text.split("\n") if q.strip()] # type: ignore
-    
-    # Remove any unwanted intro text like "Here are 5 questions"
+
+    # Filter out unwanted intro lines
     questions = [q for q in questions if not q.lower().startswith("here are")]
 
-    # Keep only first 5 clean questions
     return questions[:5]
 
