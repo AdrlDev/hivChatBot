@@ -1,14 +1,10 @@
-#rag_bot.py
-
 from fastapi import FastAPI
 import os
-from langchain_cohere import CohereEmbeddings
-from langchain_cohere import ChatCohere
+from langchain_cohere import CohereEmbeddings, ChatCohere
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders.pdf import PyPDFLoader
 from langchain.chains import RetrievalQA
 from dotenv import load_dotenv
-
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 app = FastAPI()
@@ -22,6 +18,7 @@ from pathlib import Path
 
 load_dotenv()
 api_key = os.getenv("COHERE_API_KEY")
+
 
 def load_documents():
     pdf_files = [
@@ -45,8 +42,9 @@ def load_documents():
 
     return documents
 
+
 def get_vectorstore():
-    embeddings = CohereEmbeddings(model="embed-english-v3.0", cohere_api_key=api_key)
+    embeddings = CohereEmbeddings(model="embed-english-v3.0", cohere_api_key=api_key) # type: ignore
 
     if os.path.exists(VECTORSTORE_PATH):
         print("Loading cached vectorstore...")
@@ -59,9 +57,10 @@ def get_vectorstore():
 
     return vectorstore
 
+
 def get_chatbot():
     vectorstore = get_vectorstore()
-    chat = ChatCohere(model="command-a-03-2025", temperature=0, cohere_api_key=api_key)
+    chat = ChatCohere(model="command-a-03-2025", temperature=0, cohere_api_key=api_key) # type: ignore
     retriever = vectorstore.as_retriever(
         search_type="similarity_score_threshold",
         search_kwargs={"k": 5, "score_threshold": 0.3}
@@ -69,6 +68,29 @@ def get_chatbot():
     qa = RetrievalQA.from_chain_type(
         llm=chat,
         retriever=retriever,
-        return_source_documents=True  # return sources to verify relevance
+        return_source_documents=True
     )
     return qa
+
+
+# ✅ Function to generate 5 suggested questions
+def generate_suggested_questions(query: str, answer: str) -> list[str]:
+    chat = ChatCohere(model="command-a-03-2025", temperature=0.3, cohere_api_key=api_key) # type: ignore
+    
+    prompt = f"""
+    The user asked: "{query}"
+    The chatbot answered: "{answer}"
+
+    Based on this, generate 5 related, natural, and helpful follow-up questions that the user might want to ask.
+    Keep them concise and conversational.
+    """
+    
+    response = chat.invoke(prompt)
+    text = response.content if hasattr(response, "content") else str(response)
+
+    # Extract questions (split by newline or numbering)
+    questions = [q.strip(" .") for q in text.split("\n") if q.strip()] # type: ignore
+    questions = [q for q in questions if len(q) > 5]  # filter short junk
+
+    # Ensure exactly 5 suggestions
+    return questions[:5]
