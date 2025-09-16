@@ -81,16 +81,19 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
     The user asked: "{query}"
     The chatbot answered: "{answer}"
 
-    Based on this, generate 5 related, natural, and helpful follow-up questions that the user might want to ask.
-    Keep them concise and conversational.
+    Generate 5 related follow-up questions that are concise, natural, and helpful.
+    Return them as plain text questions only, no numbering, no formatting, no markdown.
     """
-    
+
     response = chat.invoke(prompt)
     text = response.content if hasattr(response, "content") else str(response)
 
-    # Extract questions (split by newline or numbering)
-    questions = [q.strip(" .") for q in text.split("\n") if q.strip()] # type: ignore
-    questions = [q for q in questions if len(q) > 5]  # filter short junk
+    # Split into lines and clean
+    questions = [q.strip(" -*•.").replace("**", "") for q in text.split("\n") if q.strip()] # type: ignore
+    
+    # Remove any unwanted intro text like "Here are 5 questions"
+    questions = [q for q in questions if not q.lower().startswith("here are")]
 
-    # Ensure exactly 5 suggestions
+    # Keep only first 5 clean questions
     return questions[:5]
+
