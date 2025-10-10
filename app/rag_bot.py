@@ -6,6 +6,8 @@ from langchain_community.document_loaders.pdf import PyPDFLoader
 from langchain.chains import RetrievalQA
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import re
+from difflib import SequenceMatcher
 
 app = FastAPI()
 
@@ -72,46 +74,66 @@ def get_chatbot():
     )
     return qa
 
+def fix_spacing(text: str) -> str:
+    """Fix broken spacing issues like 'Whatisthe', 'HIVlifecycle', etc."""
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)       # lower→Upper
+    text = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", text)       # letter→number
+    text = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", text)       # number→letter
+    text = re.sub(r"([?!])([A-Z])", r"\1 \2", text)        # punctuation→Upper
+    text = re.sub(r"\s{2,}", " ", text)                    # collapse spaces
+    return text.strip()
+
 
 # ✅ Function to generate 5 suggested questions
 def generate_suggested_questions(query: str, answer: str) -> list[str]:
-    # Load the vectorstore retriever
+    """Generate 5 clean follow-up questions from HIV PDFs."""
     vectorstore = get_vectorstore()
     retriever = vectorstore.as_retriever(
         search_type="similarity_score_threshold",
-        search_kwargs={"k": 5, "score_threshold": 0.3}
+        search_kwargs={"k": 15, "score_threshold": 0.3}
     )
 
-    # Get context from PDFs related to the query + answer
     docs = retriever.get_relevant_documents(query + " " + answer)
+    docs = [
+        d for d in docs
+        if any(x in d.metadata.get("source", "").lower()
+               for x in ["hiv_qa.pdf", "hiv_information_sheets.pdf"])
+    ]
+
     context = "\n".join([doc.page_content for doc in docs])
 
-    chat = ChatCohere(
-        model="command-a-03-2025",
-        temperature=0.3,
-        cohere_api_key=api_key # type: ignore
-    ) # type: ignore
-    
-    prompt = f"""
-    The user asked: "{query}"
-    The chatbot answered: "{answer}"
+    # Extract potential questions
+    potential_questions = re.findall(r"([A-Z][^?.!]{3,120}\?)", context)
+    cleaned, seen = [], set()
 
-    Here is additional context from HIV information documents:
-    {context}
+    for q in potential_questions:
+        q = re.sub(r"(?i)\bTopic\s*\d+[:.\-]?\s*", "", q)
+        q = re.sub(r"(?i)\bQ\d+[:.\-]?\s*", "", q)
+        q = re.sub(r"PMC\d+/?", "", q)
+        q = re.sub(r"HIVChatbot Dataset", "", q, flags=re.I)
+        q = fix_spacing(q)
 
-    Based ONLY on this context, generate 5 related follow-up questions
-    that are concise, natural, and helpful.
-    Return them as plain text questions only, no numbering, no formatting, no markdown.
-    """
+        if not q.endswith("?"):
+            q += "?"
+        if 10 < len(q) < 120 and q.lower() not in seen:
+            seen.add(q.lower())
+            cleaned.append(q[0].upper() + q[1:])
 
-    response = chat.invoke(prompt)
-    text = response.content if hasattr(response, "content") else str(response)
+    # Sort by similarity
+    def similarity(a, b): return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    ranked = sorted(
+        cleaned,
+        key=lambda x: max(similarity(x, query), similarity(x, answer)),
+        reverse=True
+    )
 
-    # Split and clean up questions
-    questions = [q.strip(" -*•.").replace("**", "") for q in text.split("\n") if q.strip()] # type: ignore
+    fallback = [
+        "What are the common symptoms of HIV?",
+        "How can HIV be prevented?",
+        "Can HIV be transmitted through casual contact?",
+        "How is HIV treated?",
+        "Where can I get tested for HIV?"
+    ]
 
-    # Filter out unwanted intro lines
-    questions = [q for q in questions if not q.lower().startswith("here are")]
-
-    return questions[:5]
+    return ranked[:5] or fallback
 

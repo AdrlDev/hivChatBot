@@ -41,10 +41,47 @@ def format_response(text: str) -> str:
 
     return formatted_text.strip()
 
+# ✅ Predefined responses based on image
+def get_predefined_response(query: str) -> str | None:
+    q = query.lower().strip()
+
+    # Define patterns that only match whole words
+    greetings = [r"\bhi\b", r"\bhello\b", r"\bhey\b", r"\bgood morning\b", r"\bgood afternoon\b", r"\bgood evening\b"]
+    farewells = [r"\bbye\b", r"\bgoodbye\b", r"\bsee you\b", r"\btake care\b", r"\bthank you\b", r"\bthanks\b"]
+    hiv_keywords = [r"\bhiv\b", r"\baids\b", r"\bcondom\b", r"\bprep\b", r"\bart\b", r"\bsti\b", r"\binfection\b"]
+
+    # 1️⃣ Greeting (use regex whole-word search)
+    if any(re.search(pattern, q) for pattern in greetings):
+        return (
+            "Hi there! Welcome to **HIVocate**. I'm here to assist you with HIV information you need.\n"
+            "Hello! I'm your HIV information assistant. How can I help you today?\n"
+            "Welcome to **HIVocate!** I'm here to provide you with accurate HIV-related information."
+        )
+
+    # 2️⃣ Farewell
+    if any(re.search(pattern, q) for pattern in farewells):
+        return (
+            "Take care! Remember, knowledge is power when it comes to HIV prevention.\n"
+            "Goodbye! Stay informed and stay safe.\n"
+            "Thank you for using **HIVocate.** Have a great day!"
+        )
+
+    # 3️⃣ Not related to HIV
+    if not any(re.search(pattern, q) for pattern in hiv_keywords):
+        return (
+            "I'm specialized to answer questions about HIV only. Please ask me about HIV.\n"
+            "Outside of my knowledge area."
+        )
+
+    return None
+
 
 @app.get("/chat")
 def chat(query: str = Query(...)):
     try:
+        # ✅ Step 1: Check predefined rules first
+        predefined = get_predefined_response(query)
+
         result = qa_bot.invoke(query)
         answer = result.get("result", "")
         sources = result.get("source_documents", [])
@@ -55,13 +92,25 @@ def chat(query: str = Query(...)):
         suggestions = generate_suggested_questions(query, clean_answer)
 
         if not sources:
-            return {
-                "answer": {
-                    "query": query,
-                    "result": "I'm sorry, I couldn't find an exact answer, but I can try to help further if you rephrase your question."
-                },
-                "suggested_questions": suggestions
-            }
+            if predefined:
+                return {
+                    "answer": {
+                        "query": query,
+                        "result": predefined
+                    },
+                    "suggested_questions": []
+                }
+            
+                return {
+                    "answer": {
+                        "query": query,
+                        "result": (
+                            "I'm sorry, I couldn't find an exact answer to your question right now. "
+                            "Please try rephrasing it or ask something specific about HIV prevention, testing, or treatment."
+                        )
+                    },
+                    "suggested_questions": suggestions
+                }
 
         return {
             "answer": {
