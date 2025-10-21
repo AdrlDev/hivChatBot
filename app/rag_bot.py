@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import re
 from difflib import SequenceMatcher
+from langchain import LLMChain, PromptTemplate
+from langchain.chains.llm import LLMChain
+import json
+import logging
 
 app = FastAPI()
 
@@ -74,105 +78,210 @@ def get_chatbot():
     )
     return qa
 
-def fix_spacing(text: str) -> str:
-    # Remove excessive spaces between letters: "H I V" → "HIV"
-    text = re.sub(r"\b([A-Za-z])\s+([A-Za-z])\s+([A-Za-z])\b", r"\1\2\3", text)
-    text = re.sub(r"\b([A-Za-z])\s+([A-Za-z])\b", r"\1\2", text)
+# small, robust text cleaner for fallback
+def strong_clean_text(s: str) -> str:
+    # fix spaced single letters: "H I V" -> "HIV"
+    s = re.sub(r'\b([A-Za-z])\s+([A-Za-z])\s+([A-Za-z])\b', r'\1\2\3', s)
+    s = re.sub(r'\b([A-Za-z])\s+([A-Za-z])\b', r'\1\2', s)
 
-    # Add missing spaces between lowercase/uppercase: "attackthe" → "attack the"
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    # insert space before capital when previous is lowercase: "attackThe" -> "attack The"
+    s = re.sub(r'([a-z])([A-Z])', r'\1 \2', s)
 
-    # Add missing spaces between lowercase words accidentally glued: "attackthe" → "attack the"
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    # NEW: Add missing spaces between lowercase words joined together (naive word boundary fix)
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    # break common glued lowercase sequences heuristically:
+    # "attackthebody" -> "attack the body" by inserting spaces before common small words
+    small_words = [
+        'the','a','an','and','or','but','to','of','in','for','on','with','as','by','from',
+        'is','are','was','were','be','been','do','does','did','this','that','these','those',
+        'have','has','had','when','where','how','what','why','which','who'
+    ]
+    # naive insertion: try to insert spaces in runs of lowercase letters if they contain a small_word boundary
+    def insert_small_word_spaces(text):
+        for w in small_words:
+            # look for patterns like 'attackthe' or 'whendo' and make them 'attack the'
+            pattern = r'([a-z]{3,})(' + re.escape(w) + r')([a-z]{0,})'
+            text = re.sub(pattern, r'\1 \2 \3', text)
+        return text
 
-    # Generic fix for words jammed together: insert space between a lowercase letter followed by another lowercase but capitalized section
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    s = insert_small_word_spaces(s)
 
-    # Try to break glued lowercase words: "attackthebody" → "attack the body"
-    text = re.sub(r"([a-z]{3,})(?=[A-Z])", r"\1 ", text)
+    # ensure keywords like HIV/AIDS are uppercase and joined: "H I V" -> "HIV", "hiv" -> "HIV"
+    s = re.sub(r'\b[hH]\s*[iI]\s*[vV]\b', 'HIV', s)
+    s = re.sub(r'\b[aA]\s*[iI]\s*[dD]\s*[sS]\b', 'AIDS', s)
 
-    # Add spaces before known keywords (optional)
-    keywords = ["HIV", "AIDS", "PrEP", "ART", "STI", "infection", "body", "transmitted", "attack", "signs", "same", "come", "from"]
-    for word in keywords:
-        text = re.sub(rf"(?i)(?<!\s)({word})", r" \1", text)
+    # normalize spacing and punctuation
+    s = re.sub(r'\s+([,?.!;:])', r'\1', s)
+    s = re.sub(r'\s+', ' ', s).strip()
 
-    # Normalize whitespace
-    text = re.sub(r"\s+", " ", text).strip()
+    # fix weird "attackthe" where prior heuristics missed: split lowercase runs by looking for English-like boundaries
+    s = re.sub(r'([a-z])([A-Z])', r'\1 \2', s)
 
-    # Fix punctuation spacing
-    text = re.sub(r"\s+\?", "?", text)
-    text = re.sub(r"\s+,", ",", text)
-    text = re.sub(r"\s+\.", ".", text)
+    # capitalize first character
+    if s:
+        s = s[0].upper() + s[1:]
 
-    # Capitalize first letter
-    if text:
-        text = text[0].upper() + text[1:]
+    return s
 
-    return text
-
-# ✅ Generate 5 clean suggested questions
+# Primary: generate questions using LLM (ChatCohere via your existing ChatCohere wrapper)
 def generate_suggested_questions(query: str, answer: str) -> list[str]:
-    """Generate 5 clean follow-up questions from HIV PDFs."""
+    """
+    Primary approach: Ask the LLM to produce 5 concise, user-friendly follow-up questions
+    based on the answer and top retrieved document text (so we avoid relying on broken PDF question extraction).
+    Fallback: aggressive cleaning and extraction from PDFs if LLM fails.
+    """
+
     vectorstore = get_vectorstore()
+    # get top N docs for context
     retriever = vectorstore.as_retriever(
         search_type="similarity_score_threshold",
-        search_kwargs={"k": 15, "score_threshold": 0.3}
+        search_kwargs={"k": 6, "score_threshold": 0.25}
     )
-
     docs = retriever.get_relevant_documents(answer)
+    # keep only our two PDF sources to be consistent
     docs = [
         d for d in docs
         if any(x in d.metadata.get("source", "").lower()
                for x in ["hiv_qa.pdf", "hiv_information_sheets.pdf"])
     ]
 
-    context = "\n".join([doc.page_content for doc in docs])
-    context = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", context)
-    context = re.sub(r"\s+", " ", context)
+    context_text = "\n\n".join([d.page_content for d in docs])[:4000]  # cap length to avoid huge prompts
 
-    potential_questions = re.findall(r"([A-Z][A-Za-z\s,;'’\-()0-9]{3,200}\?)", context)
-    cleaned, seen = [], set()
+    # LLM prompt: ask for 5 short follow-up questions, no analysis, output as JSON array
+    prompt_text = """You are an assistant that generates concise, friendly follow-up questions for a user about HIV.
+                    Given the short user query and the authoritative answer and the supporting context (documents), produce exactly 5 distinct, clear, short follow-up questions that a chatbot could present as suggested next questions.
+                    Requirements:
+                    - Questions must be about HIV-related topics or helpful next steps (testing, symptoms, prevention, treatment, sources, timeline).
+                    - Avoid quoting the context verbatim; compose natural questions.
+                    - Return the output as a JSON array of strings only (no extra text).
+                    - Keep each question short (<= 80 characters) and properly spaced, capitalized, and punctuated.
+                    User Query:
+                    \"\"\"{query}\"\"\"
+                    Answer:
+                    \"\"\"{answer}\"\"\"
+                    Context (top documents, for reference):
+                    \"\"\"{context}\"\"\"
+                    Now produce the JSON array of 5 questions.
+                    """
 
-    for q in potential_questions:
-        q = re.sub(r"(?i)\bTopic\s*\d+[:.\-]?\s*", "", q)
-        q = re.sub(r"(?i)\bQ\d+[:.\-]?\s*", "", q)
-        q = re.sub(r"PMC\d+/?", "", q)
-        q = re.sub(r"HIVChatbot Dataset", "", q, flags=re.I)
-        q = fix_spacing(q)
-
-        if not q.endswith("?"):
-            q += "?"
-
-        if 10 < len(q) < 120 and q.lower() not in seen:
-            seen.add(q.lower())
-            cleaned.append(q)
-
-    # Sort by similarity
-    def similarity(a, b):
-        return SequenceMatcher(None, a.lower(), b.lower()).ratio()
-
-    ranked = sorted(
-        cleaned,
-        key=lambda x: max(similarity(x, query), similarity(x, answer)),
-        reverse=True
+    prompt = PromptTemplate(
+        input_variables=["query", "answer", "context"],
+        template=prompt_text
     )
 
-    # Remove near-duplicates
-    unique_ranked = []
-    for q in ranked:
-        if not any(SequenceMatcher(None, q.lower(), r.lower()).ratio() > 0.9 for r in unique_ranked):
-            unique_ranked.append(q)
+    # Try to call your ChatCohere LLM (langchain wrapper)
+    try:
+        chat = ChatCohere(model="command-a-03-2025", temperature=0.0, cohere_api_key=api_key) # pyright: ignore[reportArgumentType]
+        chain = LLMChain(llm=chat, prompt=prompt)
+        resp = chain.run({"query": query, "answer": answer, "context": context_text})
+        # resp should be a JSON array, but LLM sometimes returns with newlines; try to extract JSON
+        resp = resp.strip()
+        # Allow for cases where model returns triple-backticks or explanation; extract first JSON array-looking substring
+        m = re.search(r'(\[[\s\S]*?\])', resp)
+        if m:
+            arr_text = m.group(1)
+        else:
+            # assume entire response is the array
+            arr_text = resp
 
-    fallback = [
-        "What are the common symptoms of HIV?",
-        "How can HIV be prevented?",
-        "Can HIV be transmitted through casual contact?",
-        "How is HIV treated?",
-        "Where can I get tested for HIV?"
-    ]
+        questions = json.loads(arr_text)
+        # sanitize and ensure exactly 5 unique clean items
+        cleaned = []
+        seen = set()
+        for q in questions:
+            if not isinstance(q, str):
+                continue
+            q_clean = q.strip()
+            q_clean = re.sub(r'\s+', ' ', q_clean)
+            q_clean = q_clean[0].upper() + q_clean[1:] if q_clean else q_clean
+            if not q_clean.endswith('?'):
+                q_clean += '?'
+            if q_clean.lower() not in seen:
+                seen.add(q_clean.lower())
+                cleaned.append(q_clean)
+            if len(cleaned) >= 5:
+                break
 
-    return unique_ranked[:5] or fallback
+        if len(cleaned) >= 1:
+            # pad with sensible fallbacks if <5
+            fallback = [
+                "What are the common symptoms of HIV?",
+                "How can HIV be prevented?",
+                "Where can I get tested for HIV?",
+                "How is HIV treated?",
+                "Is HIV the same as AIDS?"
+            ]
+            for f in fallback:
+                if len(cleaned) >= 5:
+                    break
+                if f.lower() not in seen:
+                    cleaned.append(f)
+            return cleaned[:5]
+
+    except Exception as e:
+        # log and fall back to extraction-based approach
+        logging.exception("LLM-based suggested questions failed, falling back to extraction. Error: %s", e)
+
+    # --------------------------
+    # Fallback: extract and aggressively clean questions from PDF text
+    # --------------------------
+    try:
+        context = "\n".join([d.page_content for d in docs])
+        # attempt to normalize joins before regex
+        context = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', context)   # split camel-case joins
+        context = re.sub(r'\s+', ' ', context)
+        # extract candidate question-like substrings (longer capture window)
+        potential_questions = re.findall(r'([A-Z][A-Za-z0-9 ,;:\'\"()\/\-]{3,240}\?)', context)
+        cleaned = []
+        seen = set()
+        for q in potential_questions:
+            q = re.sub(r'(?i)\bTopic\s*\d+[:.\-]?\s*', '', q)
+            q = re.sub(r'(?i)\bQ\d+[:.\-]?\s*', '', q)
+            q = re.sub(r'PMC\d+/?', '', q)
+            q = re.sub(r'HIVChatbot Dataset', '', q, flags=re.I)
+            q = strong_clean_text(q)
+            # additional small grammar fixes
+            q = re.sub(r'\bWhatare signsof\b', 'What are the signs of', q, flags=re.I)
+            q = re.sub(r'\bWhendo\b', 'When do', q, flags=re.I)
+            q = re.sub(r'\bWhatis\b', 'What is', q, flags=re.I)
+            q = re.sub(r'\bIs HIVthesameas\b', 'Is HIV the same as', q, flags=re.I)
+            q = re.sub(r'\s+', ' ', q).strip()
+            if not q.endswith('?'):
+                q += '?'
+            q = q[0].upper() + q[1:]
+            if len(q) > 8 and len(q) < 120 and q.lower() not in seen:
+                seen.add(q.lower())
+                cleaned.append(q)
+            if len(cleaned) >= 10:
+                break
+
+        # dedupe near-duplicates
+        unique_ranked = []
+        for q in cleaned:
+            if not any(SequenceMatcher(None, q.lower(), r.lower()).ratio() > 0.9 for r in unique_ranked):
+                unique_ranked.append(q)
+
+        # final selection: top 5 or fallback
+        result = unique_ranked[:5]
+        if len(result) < 5:
+            fallback = [
+                "What are the common symptoms of HIV?",
+                "How can HIV be prevented?",
+                "Where can I get tested for HIV?",
+                "How is HIV treated?",
+                "Is HIV the same as AIDS?"
+            ]
+            for f in fallback:
+                if f.lower() not in [x.lower() for x in result]:
+                    result.append(f)
+                if len(result) >= 5:
+                    break
+        return result[:5]
+    except Exception as e:
+        logging.exception("Final fallback also failed: %s", e)
+        # ultimate fallback static questions
+        return [
+            "What are the common symptoms of HIV?",
+            "How can HIV be prevented?",
+            "Can HIV be transmitted through casual contact?",
+            "How is HIV treated?",
+            "Where can I get tested for HIV?"
+        ]
