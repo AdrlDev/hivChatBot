@@ -74,14 +74,12 @@ def get_chatbot():
     )
     return qa
 
+# ✅ Function to fix spacing in extracted text
 def fix_spacing(text: str) -> str:
-    """Fix broken spacing issues like 'Whatisthe', 'HIVlifecycle', etc."""
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)       # lower→Upper
-    text = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", text)       # letter→number
-    text = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", text)       # number→letter
-    text = re.sub(r"([?!])([A-Z])", r"\1 \2", text)        # punctuation→Upper
-    text = re.sub(r"\s{2,}", " ", text)                    # collapse spaces
-    return text.strip()
+    text = re.sub(r"(?<=\w)([A-Z])", r" \1", text)  # separate joined words like "HIVmeans" → "HIV means"
+    text = re.sub(r"\s+", " ", text)  # normalize spaces
+    text = text.strip()
+    return text
 
 
 # ✅ Function to generate 5 suggested questions
@@ -102,31 +100,38 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
 
     context = "\n".join([doc.page_content for doc in docs])
 
-    # Extract potential questions
+    # Extract potential questions (up to 120 chars)
     potential_questions = re.findall(r"([A-Z][^?.!]{3,120}\?)", context)
     cleaned, seen = [], set()
 
     for q in potential_questions:
+        # 🧹 Clean unwanted prefixes or artifacts
         q = re.sub(r"(?i)\bTopic\s*\d+[:.\-]?\s*", "", q)
         q = re.sub(r"(?i)\bQ\d+[:.\-]?\s*", "", q)
         q = re.sub(r"PMC\d+/?", "", q)
         q = re.sub(r"HIVChatbot Dataset", "", q, flags=re.I)
         q = fix_spacing(q)
 
+        # Ensure question ends with '?'
         if not q.endswith("?"):
             q += "?"
+
+        # Validate and deduplicate
         if 10 < len(q) < 120 and q.lower() not in seen:
             seen.add(q.lower())
             cleaned.append(q[0].upper() + q[1:])
 
-    # Sort by similarity
-    def similarity(a, b): return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    # 🧠 Sort by similarity to current query or answer
+    def similarity(a, b): 
+        return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    
     ranked = sorted(
         cleaned,
         key=lambda x: max(similarity(x, query), similarity(x, answer)),
         reverse=True
     )
 
+    # Default fallback if none found
     fallback = [
         "What are the common symptoms of HIV?",
         "How can HIV be prevented?",
@@ -136,4 +141,3 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
     ]
 
     return ranked[:5] or fallback
-
