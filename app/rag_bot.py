@@ -74,29 +74,43 @@ def get_chatbot():
     )
     return qa
 
-# ✅ Stronger spacing and OCR artifact cleaner
 def fix_spacing(text: str) -> str:
-    # Remove excessive spaces between single letters like "H I V" → "HIV"
+    # Remove excessive spaces between letters: "H I V" → "HIV"
     text = re.sub(r"\b([A-Za-z])\s+([A-Za-z])\s+([A-Za-z])\b", r"\1\2\3", text)
     text = re.sub(r"\b([A-Za-z])\s+([A-Za-z])\b", r"\1\2", text)
 
-    # Add missing spaces before capital letters (e.g. "HowdoesHIVattack" → "How does HIV attack")
-    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+    # Add missing spaces between lowercase/uppercase: "attackthe" → "attack the"
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
 
-    # Add spaces before known words (HIV, AIDS, PrEP, ART, STI, infection, etc.)
+    # Add missing spaces between lowercase words accidentally glued: "attackthe" → "attack the"
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    # NEW: Add missing spaces between lowercase words joined together (naive word boundary fix)
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+
+    # Generic fix for words jammed together: insert space between a lowercase letter followed by another lowercase but capitalized section
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+
+    # Try to break glued lowercase words: "attackthebody" → "attack the body"
+    text = re.sub(r"([a-z]{3,})(?=[A-Z])", r"\1 ", text)
+
+    # Add spaces before known keywords (optional)
     keywords = ["HIV", "AIDS", "PrEP", "ART", "STI", "infection", "body", "transmitted", "attack", "signs", "same", "come", "from"]
     for word in keywords:
         text = re.sub(rf"(?i)(?<!\s)({word})", r" \1", text)
 
-    # Fix glued lowercase/uppercase transitions: "WhatisHIV" → "What is HIV"
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-
-    # Normalize spaces
+    # Normalize whitespace
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Ensure proper capitalization and question mark spacing
-    text = text[0].upper() + text[1:] if text else text
+    # Fix punctuation spacing
     text = re.sub(r"\s+\?", "?", text)
+    text = re.sub(r"\s+,", ",", text)
+    text = re.sub(r"\s+\.", ".", text)
+
+    # Capitalize first letter
+    if text:
+        text = text[0].upper() + text[1:]
 
     return text
 
@@ -109,7 +123,7 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
         search_kwargs={"k": 15, "score_threshold": 0.3}
     )
 
-    docs = retriever.get_relevant_documents(query + " " + answer)
+    docs = retriever.get_relevant_documents(answer)
     docs = [
         d for d in docs
         if any(x in d.metadata.get("source", "").lower()
@@ -117,8 +131,10 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
     ]
 
     context = "\n".join([doc.page_content for doc in docs])
+    context = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", context)
+    context = re.sub(r"\s+", " ", context)
 
-    potential_questions = re.findall(r"([A-Z][^?.!]{3,120}\?)", context)
+    potential_questions = re.findall(r"([A-Z][A-Za-z\s,;'’\-()0-9]{3,200}\?)", context)
     cleaned, seen = [], set()
 
     for q in potential_questions:
