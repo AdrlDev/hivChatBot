@@ -105,7 +105,7 @@ def chat(query: str = Query(...)):
                         "query": query,
                         "result": predefined
                     },
-                    "suggested_questions": []
+                    "suggested_questions": suggestions
                 }
             
                 return {
