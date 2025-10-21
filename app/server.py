@@ -5,6 +5,7 @@ from fastapi import Query
 from fastapi import FastAPI
 from .rag_bot import get_chatbot, generate_suggested_questions  # <-- your actual rag module
 import re
+import random
 
 app = FastAPI()
 qa_bot = get_chatbot()  # Re-enable this to use your RAG model
@@ -50,31 +51,37 @@ def get_predefined_response(query: str) -> str | None:
     farewells = [r"\bbye\b", r"\bgoodbye\b", r"\bsee you\b", r"\btake care\b", r"\bthank you\b", r"\bthanks\b"]
     hiv_keywords = [r"\bhiv\b", r"\baids\b", r"\bcondom\b", r"\bprep\b", r"\bart\b", r"\bsti\b", r"\binfection\b"]
 
+    # Predefined responses
+    greeting_responses = [
+        "Hi there! Welcome to **HIVocate**. I'm here to assist you with HIV information you need.\n",
+        "Hello! I'm your HIV information assistant. How can I help you today?\n",
+        "Welcome to **HIVocate!** I'm here to provide you with accurate HIV-related information.\n"
+    ]
+
+    farewell_responses = [
+        "Take care! Remember, knowledge is power when it comes to HIV prevention.\n",
+        "Goodbye! Stay informed and stay safe.\n",
+        "Thank you for using **HIVocate.** Have a great day!\n"
+    ]
+
+    unrelated_responses = [
+        "I'm specialized to answer questions about HIV only. Please ask me about HIV.\n",
+        "Outside of my knowledge area.\n"
+    ]
+
     # 1️⃣ Greeting (use regex whole-word search)
     if any(re.search(pattern, q) for pattern in greetings):
-        return (
-            "Hi there! Welcome to **HIVocate**. I'm here to assist you with HIV information you need.\n"
-            "Hello! I'm your HIV information assistant. How can I help you today?\n"
-            "Welcome to **HIVocate!** I'm here to provide you with accurate HIV-related information."
-        )
+        return random.choice(greeting_responses)
 
     # 2️⃣ Farewell
     if any(re.search(pattern, q) for pattern in farewells):
-        return (
-            "Take care! Remember, knowledge is power when it comes to HIV prevention.\n"
-            "Goodbye! Stay informed and stay safe.\n"
-            "Thank you for using **HIVocate.** Have a great day!"
-        )
+        return random.choice(farewell_responses)
 
     # 3️⃣ Not related to HIV
     if not any(re.search(pattern, q) for pattern in hiv_keywords):
-        return (
-            "I'm specialized to answer questions about HIV only. Please ask me about HIV.\n"
-            "Outside of my knowledge area."
-        )
+        return random.choice(unrelated_responses)
 
     return None
-
 
 @app.get("/chat")
 def chat(query: str = Query(...)):
