@@ -74,19 +74,31 @@ def get_chatbot():
     )
     return qa
 
-# ✅ Enhanced spacing and OCR artifact cleaner
+# ✅ Stronger spacing and OCR artifact cleaner
 def fix_spacing(text: str) -> str:
     # Remove excessive spaces between single letters like "H I V" → "HIV"
     text = re.sub(r"\b([A-Za-z])\s+([A-Za-z])\s+([A-Za-z])\b", r"\1\2\3", text)
     text = re.sub(r"\b([A-Za-z])\s+([A-Za-z])\b", r"\1\2", text)
-    
-    # Add missing spaces between joined words like "Whatisthe" → "What is the"
-    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
-    
-    # Normalize multiple spaces to one
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
 
+    # Add missing spaces before capital letters (e.g. "HowdoesHIVattack" → "How does HIV attack")
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+
+    # Add spaces before known words (HIV, AIDS, PrEP, ART, STI, infection, etc.)
+    keywords = ["HIV", "AIDS", "PrEP", "ART", "STI", "infection", "body", "transmitted", "attack", "signs", "same", "come", "from"]
+    for word in keywords:
+        text = re.sub(rf"(?i)(?<!\s)({word})", r" \1", text)
+
+    # Fix glued lowercase/uppercase transitions: "WhatisHIV" → "What is HIV"
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+
+    # Normalize spaces
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Ensure proper capitalization and question mark spacing
+    text = text[0].upper() + text[1:] if text else text
+    text = re.sub(r"\s+\?", "?", text)
+
+    return text
 
 # ✅ Generate 5 clean suggested questions
 def generate_suggested_questions(query: str, answer: str) -> list[str]:
@@ -106,29 +118,24 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
 
     context = "\n".join([doc.page_content for doc in docs])
 
-    # Extract sentences ending with a '?'
     potential_questions = re.findall(r"([A-Z][^?.!]{3,120}\?)", context)
     cleaned, seen = [], set()
 
     for q in potential_questions:
-        # Remove extra prefixes or dataset tags
         q = re.sub(r"(?i)\bTopic\s*\d+[:.\-]?\s*", "", q)
         q = re.sub(r"(?i)\bQ\d+[:.\-]?\s*", "", q)
         q = re.sub(r"PMC\d+/?", "", q)
         q = re.sub(r"HIVChatbot Dataset", "", q, flags=re.I)
-
         q = fix_spacing(q)
 
-        # Ensure it ends with '?'
         if not q.endswith("?"):
             q += "?"
 
-        # Filter valid unique questions
         if 10 < len(q) < 120 and q.lower() not in seen:
             seen.add(q.lower())
-            cleaned.append(q[0].upper() + q[1:])
+            cleaned.append(q)
 
-    # Rank by relevance
+    # Sort by similarity
     def similarity(a, b):
         return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
@@ -138,13 +145,12 @@ def generate_suggested_questions(query: str, answer: str) -> list[str]:
         reverse=True
     )
 
-    # Remove duplicates across pages (e.g., “What is HIV?” twice)
+    # Remove near-duplicates
     unique_ranked = []
     for q in ranked:
-        if not any(SequenceMatcher(None, q.lower(), existing.lower()).ratio() > 0.9 for existing in unique_ranked):
+        if not any(SequenceMatcher(None, q.lower(), r.lower()).ratio() > 0.9 for r in unique_ranked):
             unique_ranked.append(q)
 
-    # Fallback if nothing found
     fallback = [
         "What are the common symptoms of HIV?",
         "How can HIV be prevented?",
