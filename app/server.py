@@ -53,15 +53,15 @@ def get_predefined_response(query: str) -> str | None:
 
     # Predefined responses
     greeting_responses = [
-        "Hi there! Welcome to **HIVocate**. I'm here to assist you with HIV information you need.\n",
+        "Hi there! Welcome to HIVocate. I'm here to assist you with HIV information you need.\n",
         "Hello! I'm your HIV information assistant. How can I help you today?\n",
-        "Welcome to **HIVocate!** I'm here to provide you with accurate HIV-related information.\n"
+        "Welcome to HIVocate! I'm here to provide you with accurate HIV-related information.\n"
     ]
 
     farewell_responses = [
         "Take care! Remember, knowledge is power when it comes to HIV prevention.\n",
         "Goodbye! Stay informed and stay safe.\n",
-        "Thank you for using **HIVocate.** Have a great day!\n"
+        "Thank you for using HIVocate. Have a great day!\n"
     ]
 
     unrelated_responses = [
