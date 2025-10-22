@@ -65,8 +65,7 @@ def get_predefined_response(query: str) -> str | None:
     ]
 
     unrelated_responses = [
-        "I'm specialized to answer questions about HIV only. Please ask me about HIV.\n",
-        "Outside of my knowledge area.\n"
+        "Outside of my knowledge area. I'm specialized to answer questions about HIV only. Please ask me about HIV.\n"
     ]
 
     # 1️⃣ Greeting (use regex whole-word search)
