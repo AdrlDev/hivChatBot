@@ -47,7 +47,9 @@ def get_predefined_response(query: str) -> str | None:
     q = query.lower().strip()
 
     # Define patterns that only match whole words
-    greetings = [r"\bhi\b", r"\bhello\b", r"\bhey\b", r"\bgood morning\b", r"\bgood afternoon\b", r"\bgood evening\b"]
+    greetings = [r"\bhi\b", r"\bhello\b", r"\bhey\b", r"\bgood morning\b", r"\bgood afternoon\b", r"\bgood evening\b"
+                 , r"\bgoodevening\b", r"\bgoodmorning\b", r"\bgoodafternoon\b", r"\bevening\b", r"\bmorning\b"
+                 , r"\bafternoon\b"]
     farewells = [r"\bbye\b", r"\bgoodbye\b", r"\bsee you\b", r"\btake care\b", r"\bthank you\b", r"\bthanks\b"]
     hiv_keywords = [r"\bhiv\b", r"\baids\b", r"\bcondom\b", r"\bprep\b", r"\bart\b", r"\bsti\b", r"\binfection\b"]
 
